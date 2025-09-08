@@ -59,7 +59,7 @@ module riscvsingle(input  logic        clk, reset,
                    output logic [31:0] ALUResult, WriteData,
                    input  logic [31:0] ReadData);
 
-  logic       ALUSrc, RegWrite, Jump, Zero;
+  logic       ALUSrc, RegWrite, Jump, Zero, PCSrc; // -> Adc PCSrc não adicionado
   logic [1:0] ResultSrc, ImmSrc;
   logic [2:0] ALUControl;
 
@@ -92,7 +92,7 @@ module controller(input  logic [6:0] op,
              ALUSrc, RegWrite, Jump, ImmSrc, ALUOp);
   aludec  ad(op[5], funct3, funct7b5, ALUOp, ALUControl);
 
-  assign PCSrc = Branch & Zero;
+  assign PCSrc = Branch & Zero | Jump; // -> Adc Jump poruque se Jump = 1 não importa ele pula
 endmodule
 
 module maindec(input  logic [6:0] op,
@@ -115,8 +115,10 @@ module maindec(input  logic [6:0] op,
       7'b0100011: controls = 11'b0_01_1_1_00_0_00_0; // sw
       7'b0110011: controls = 11'b1_xx_0_0_00_0_10_0; // R-type 
       7'b1100011: controls = 11'b0_10_0_0_00_1_01_0; // beq
-      7'b1101111: controls = 11'bx_xx_1_0_10_1_00_1; // Jump Type
-      7'b0010011: controls = 11'bx_xx_1_0_00_0_00_0; // I-Type
+
+      7'b1101111: controls = 11'b1_11_1_0_10_1_00_1; // -> Adc Jump Type
+      7'b0010011: controls = 11'b1_00_1_0_00_0_00_0; // -> Adc I-Type
+
       default:    controls = 11'bx_xx_x_x_xx_x_xx_x; // non-implemented instruction
     endcase
 endmodule
@@ -166,19 +168,21 @@ module datapath(input  logic        clk, reset,
 
   // next PC logic
   flopr #(32) pcreg(clk, reset, PCNext, PC); 
-  adder       pcadd4(PC, 32'd4, PCPlus4); // FALTANDO
+  adder       pcadd4(PC, 32'd4, PCPlus4);
   adder       pcaddbranch(PC, ImmExt, PCTarget);
+  
   mux2 #(32)  pcmux(PCPlus4, PCTarget, PCSrc, PCNext);
  
   // register file logic
   regfile     rf(clk, RegWrite, Instr[19:15], Instr[24:20], 
                  Instr[11:7], Result, SrcA, WriteData);
+                 
   extend      ext(Instr[31:7], ImmSrc, ImmExt);
 
   // ALU logic
   mux2 #(32)  srcbmux(WriteData, ImmExt, ALUSrc, SrcB);
   alu         alu(SrcA, SrcB, ALUControl, ALUResult, Zero);
-  mux3 #(32)  resultmux(ALUResult, ReadData, PCPlus4, ResultSrc, Result); //32b'0 trocado por PCPlus4
+  mux3 #(32)  resultmux(ALUResult, ReadData, PCPlus4, ResultSrc, Result); // -> Adc 32b'0 trocado por PCPlus4
 endmodule
 
 module regfile(input  logic        clk, 
@@ -213,10 +217,12 @@ module extend(input  logic [31:7] instr,
  
   always_comb
     case(immsrc) 
-      2'b01:   immext = {{20{instr[31]}}, instr[31:25], instr[11:7]}; 
-               // B-type (branches)
-      2'b11:   immext = {{12{instr[31]}}, instr[19:12], instr[20], instr[30:21], 1'b0}; 
+      2'b00:   immext = {{20{instr[31]}}, instr[31:20]};               // -> Adc lw
+      2'b01:   immext = {{20{instr[31]}}, instr[31:25], instr[11:7]}; // sw
+      2'b10:   immext = {{20{instr[31]}}, instr[7], instr[30:25], instr[11:8], 1'b0};    // -> Adc beq
+      2'b11:   immext = {{12{instr[31]}}, instr[19:12], instr[20], instr[30:21], 1'b0}; // Jal
       default: immext = 32'bx; // undefined
+    
     endcase             
 endmodule
 
